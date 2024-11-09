@@ -5,12 +5,15 @@ import machine
 import network
 import urequests
 import webrepl
-
+import json
 from config import *
 
 
-# pin = machine.Pin(16)
-# pin.on()
+import dht
+
+dht_pin = machine.Pin(12)  # D6 on board
+sensor = dht.DHT11(dht_pin)
+adc = machine.ADC(0)
 
 
 def do_connect():
@@ -19,8 +22,7 @@ def do_connect():
     if not wlan.isconnected():
         if ENABLE_VERBOSE:
             print("Connecting to network...")
-            # TODO: fix static IP assignment
-            # wlan.ifconfig(("192.168.1.49", "255.255.255.0", "192.168.1.1", "192.168.1.50"))
+        wlan.ifconfig(("192.168.1.41", "255.255.255.0", "192.168.1.1", "192.168.1.50"))
 
         wlan.connect("home-guest", "homehome")
         while not wlan.isconnected():
@@ -42,8 +44,8 @@ def do_connect():
                     print("Status: Idle, retrying in 1 sec...")
             elif status == network.STAT_CONNECTING:
                 if ENABLE_VERBOSE:
-                    print("Status: Connecting, retrying in 1 sec...")
-            machine.lightsleep(1000)
+                    print("Status: Connecting, retrying in 1.5 sec...")
+            machine.lightsleep(1500)
     if wlan.isconnected():
         if ENABLE_VERBOSE:
             print("Network connected!")
@@ -85,26 +87,33 @@ def send_to_adafruit_io(data):
             value = "0"
         payload = {"value": value}
 
+        if ENABLE_VERBOSE:
+            print(f"Sending payload for feed {feed}: {payload} \n")
         try:
             response = urequests.post(url, headers=headers, json=payload)
-            if ENABLE_VERBOSE:
-                print(response.text)
+
             if response.status_code == 200:
                 if ENABLE_VERBOSE:
                     print(f"Data sent successfully for {feed}")
             else:
-                raise Exception(
-                    f"Failed to send data for {feed}. Status code: {response.status_code}"
-                )
+                if ENABLE_VERBOSE:
+                    print(response.text)
+                    print(payload)
+                raise Exception(f"Failed to send data for {feed} ")
             response.close()
         except Exception as e:
+            print(
+                f"Error sending data to {feed}: {e} Status code: {response.status_code}"
+            )
             if ENABLE_VERBOSE:
-                print(f"Error sending data to {feed}: {e}")
+                print(response.text)
+                print(f"Payload: {payload}")
 
 
 def read_dht(sensor, max_retries=5):
     temperature = None
     humidity = None
+
     for attempt in range(max_retries):
         try:
             if ENABLE_VERBOSE:
@@ -121,8 +130,8 @@ def read_dht(sensor, max_retries=5):
                 break
         except OSError as e:
             if ENABLE_VERBOSE:
-                print(f"Failed to read DHT11 sensor. {e}")
-        time.sleep(1)
+                print(f"Failed to read DHT11 sensor: {e}")
+        time.sleep(2)
     if temperature is None or humidity is None:
         if ENABLE_VERBOSE:
             print("Failed to get valid DHT11 readings after maximum retries.")
@@ -153,55 +162,84 @@ def read_adc(adc):
     return sensor_voltage, soil_moisture_percent
 
 
+def read_adc_avg(adc):
+    total_adc_value = 0
+    valid_readings_count = 0
+    sensor_voltage = None
+    soil_moisture_percent = None
+
+    try:
+        for _ in range(5):
+            if ENABLE_VERBOSE:
+                print("Reading from ADC...")
+            adc_value = adc.read()
+            if adc_value is not None:
+                total_adc_value += adc_value
+                valid_readings_count += 1
+                if ENABLE_VERBOSE:
+                    print(f"Raw ADC value: {adc_value}")
+            time.sleep(2)  # Sleep between readings to reduce noise impact
+    except OSError as e:
+        if ENABLE_VERBOSE:
+            print(f"Failed to read ADC sensor. {e}")
+
+    if valid_readings_count > 0:
+        average_adc_value = total_adc_value / valid_readings_count
+        sensor_voltage = (
+            average_adc_value * (1.0 / 1023.0)
+        ) * 3  # Adjust multiplier for voltage scaling
+        soil_moisture_percent = map_value(
+            average_adc_value, air_value, water_value, 0, 100
+        )
+        if ENABLE_VERBOSE:
+            print(f"Average adc value. {average_adc_value}")
+
+    return sensor_voltage, soil_moisture_percent
+
+
 do_connect()
 webrepl.start()
 gc.collect()
 
 
-if ENABLE_SENSORS:
-    import dht
+while True:
+    try:
+        # Read from sensors
+        temperature, humidity = read_dht(sensor)
 
-    dht_pin = machine.Pin(14)  # D5 on board
-    sensor = dht.DHT11(dht_pin)
-    adc = machine.ADC(0)
-    while True:
-        try:
-            # Read from sensors
-            temperature, humidity = read_dht(sensor)
-            sensor_voltage, soil_moisture_percent = read_adc(adc)
+        sensor_voltage, soil_moisture_percent = read_adc_avg(adc)
 
-            gc.collect()
+        gc.collect()
+        if ENABLE_VERBOSE:
+            print(
+                f"Temperature: {temperature}°C | Humidity: {humidity}% | Voltage: {sensor_voltage:.2f}V | Soil Moisture Percent: {soil_moisture_percent:.2f}%"
+            )
+
+        if SEND_DATA_TO_NET:
+            data = {
+                "temperature": temperature if temperature is not None else 0,
+                "humidity": humidity if humidity is not None else 0,
+                "sensor-voltage": round(sensor_voltage, 2)
+                if sensor_voltage is not None
+                else 0,
+                "soil-percentage": round(soil_moisture_percent)
+                if soil_moisture_percent is not None
+                else 0,
+            }
+
+            send_to_adafruit_io(data)
+
+    except Exception as e:
+        print(f"Error: {e}")
+
+    finally:
+        gc.collect()
+        if ENABLE_VERBOSE:
+            print(f"Going to light sleep for {ms_sleep_before_ds} milliseconds")
+
+        machine.lightsleep(ms_sleep_before_ds)
+
+        if ENABLE_DEEP_SLEEP:
             if ENABLE_VERBOSE:
-                print(
-                    f"Temperature: {temperature}°C | Humidity: {humidity}% | Voltage: {sensor_voltage:.2f}V | Soil Moisture Percent: {soil_moisture_percent:.2f}%"
-                )
-
-            if SEND_DATA_TO_NET:
-                data = {
-                    "temperature": temperature if temperature is not None else 0,
-                    "humidity": humidity if humidity is not None else 0,
-                    "soil-moisture": sensor_voltage
-                    if sensor_voltage is not None
-                    else 0,
-                    "soil-percentage": soil_moisture_percent
-                    if soil_moisture_percent is not None
-                    else 0,
-                }
-
-                send_to_adafruit_io(data)
-
-        except Exception as e:
-            if ENABLE_VERBOSE:
-                print(f"Error: {e}")
-
-        finally:
-            gc.collect()
-            if ENABLE_VERBOSE:
-                print(f"Going to light sleep for {ms_sleep_before_ds} milliseconds")
-
-            machine.lightsleep(ms_sleep_before_ds)
-
-            if ENABLE_DEEP_SLEEP:
-                if ENABLE_VERBOSE:
-                    print(f"Going to deep sleep for {ms_sleep_time} milliseconds")
-                deep_sleep(ms_sleep_time)
+                print(f"Going to deep sleep for {ms_sleep_time} milliseconds")
+            deep_sleep(ms_sleep_time)
