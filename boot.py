@@ -12,7 +12,7 @@ from config import *
 import dht
 
 dht_pin = machine.Pin(12)  # D6 on board
-sensor = dht.DHT22(dht_pin) # Use dht.DHT11(dht_pin) for a DHT11 sensor
+sensor = dht.DHT22(dht_pin)  # Use dht.DHT11(dht_pin) for a DHT11 sensor
 adc = machine.ADC(0)
 
 
@@ -90,17 +90,18 @@ def send_to_adafruit_io(data):
         if ENABLE_VERBOSE:
             print(f"Sending payload for feed {feed}: {payload} \n")
         try:
-            response = urequests.post(url, headers=headers, json=payload)
+            response = urequests.post(url, headers=headers, json=payload, timeout=10)
 
             if response.status_code == 200:
                 if ENABLE_VERBOSE:
                     print(f"Data sent successfully for {feed}")
+                time.sleep(1)
             else:
                 if ENABLE_VERBOSE:
                     print(response.text)
                     print(payload)
                 raise Exception(f"Failed to send data for {feed} ")
-            response.close()
+
         except Exception as e:
             print(
                 f"Error sending data to {feed}: {e} Status code: {response.status_code}"
@@ -117,10 +118,10 @@ def read_dht(sensor, max_retries=5):
     for attempt in range(max_retries):
         try:
             if ENABLE_VERBOSE:
-                print(f"Reading from DHT11... Attempt {attempt + 1}/{max_retries}")
+                print(f"Reading from DHT sensor... Attempt {attempt + 1}/{max_retries}")
 
-            # TODO: Fix first sensor ETIMEDOUT error on first boot
-            #       subsequent reads are fine
+            # TODO: Fix DHT11 first sensor read ETIMEDOUT error on boot.
+            #       Subsequent reads are fine. DHT22 does not experience this issue
             sensor.measure()
             temperature = sensor.temperature()
             humidity = sensor.humidity()
@@ -219,10 +220,10 @@ while True:
             data = {
                 "temperature": temperature if temperature is not None else 0,
                 "humidity": humidity if humidity is not None else 0,
-                "sensor-voltage": round(sensor_voltage, 2)
+                "sensor-voltage": "{:.1f}".format(sensor_voltage)
                 if sensor_voltage is not None
                 else 0,
-                "soil-percentage": round(soil_moisture_percent)
+                "soil-percentage": "{:.1f}".format(soil_moisture_percent)
                 if soil_moisture_percent is not None
                 else 0,
             }
