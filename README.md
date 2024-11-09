@@ -3,12 +3,12 @@
 This project logs temperature, humidity, and soil moisture data using an ESP8266 microcontroller and sends the data to Adafruit IO.
 Components used
 * ESP8266 Microcontroller
-* DHT11 temperature & humidity sensor
+* DHT11 or DHT22 temperature & humidity sensor
 * Soil moisture sensor ("Capacitive Soil Moisture Sensor V1.2")
 
 ### Setup
 1. **Hardware connections:**
-   - DHT11: Connect to GPIO14 (D5)
+   - DHT11: Connect to GPIO12 (D6)
    - Soil Moisture Sensor: Connect to A0 (ADC)
 
 2. **Software requirements:**

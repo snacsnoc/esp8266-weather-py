@@ -12,7 +12,7 @@ from config import *
 import dht
 
 dht_pin = machine.Pin(12)  # D6 on board
-sensor = dht.DHT11(dht_pin)
+sensor = dht.DHT22(dht_pin) # Use dht.DHT11(dht_pin) for a DHT11 sensor
 adc = machine.ADC(0)
 
 
